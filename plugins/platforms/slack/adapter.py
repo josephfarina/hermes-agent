@@ -6801,6 +6801,15 @@ class SlackAdapter(BasePlatformAdapter):
 
             mimetype = f.get("mimetype", "unknown")
             url = f.get("url_private_download") or f.get("url_private", "")
+            # Some inbound files (e.g. Slack in-app voice clips) report a
+            # blank mimetype (files.info: mimetype="", filetype="",
+            # mode="hosted") instead of "audio/*". Treat a blank mimetype
+            # with an STT-supported audio filename extension as audio too,
+            # so it doesn't fall through to the document branch.
+            _name_ext = os.path.splitext(f.get("name") or "")[1].lower()
+            _is_blank_mime_audio_ext = (
+                not mimetype and _name_ext in _SLACK_STT_SUPPORTED_EXTS
+            )
             if mimetype.startswith("image/") and url:
                 try:
                     ext = "." + mimetype.split("/")[-1].split(";")[0]
@@ -6822,14 +6831,18 @@ class SlackAdapter(BasePlatformAdapter):
                             e,
                             exc_info=True,
                         )
-            elif mimetype.startswith("audio/") and url:
+            elif (mimetype.startswith("audio/") or _is_blank_mime_audio_ext) and url:
                 try:
                     ext = _resolve_slack_audio_ext(f, mimetype)
                     cached = await self._download_slack_file(
                         url, ext, audio=True, team_id=team_id
                     )
                     media_urls.append(cached)
-                    media_types.append(mimetype)
+                    media_types.append(
+                        mimetype
+                        if mimetype.startswith("audio/")
+                        else _SLACK_EXT_TO_AUDIO_MIME.get(ext, "audio/mp4")
+                    )
                 except Exception as e:  # pragma: no cover - defensive logging
                     detail = self._describe_slack_download_failure(e, file_obj=f)
                     if detail:

@@ -2144,6 +2144,43 @@ class TestIncomingAudioHandling:
         # media_type stays audio/* so the gateway routes it to STT
         assert msg_event.media_types[0].startswith("audio/")
 
+    @pytest.mark.asyncio
+    async def test_empty_mimetype_voice_clip_routed_as_voice(self, adapter, tmp_path):
+        """Regression: live Slack files.info for F0BUVQ5HZ6G reports
+        mimetype="", filetype="", mode="hosted" for an in-app voice clip
+        named "Audio Clip (...).m4a". An empty mimetype must not fall
+        through to the document branch when the filename extension is a
+        known STT-supported audio format."""
+        captured = {}
+
+        async def _fake_download(url, ext, audio=False, team_id=""):
+            captured["ext"] = ext
+            captured["audio"] = audio
+            path = tmp_path / f"cached{ext}"
+            path.write_bytes(b"\x00\x00\x00\x18ftypM4A fake m4a bytes")
+            return str(path)
+
+        with patch.object(adapter, "_download_slack_file", side_effect=_fake_download):
+            event = self._make_event(
+                files=[
+                    {
+                        "mimetype": "",
+                        "filetype": "",
+                        "mode": "hosted",
+                        "name": "Audio Clip (2026-09-03 06:56:46).m4a",
+                        "url_private_download": "https://files.slack.com/clip.m4a",
+                        "size": 2048,
+                    }
+                ]
+            )
+            await adapter._handle_slack_message(event)
+
+        assert captured.get("audio") is True
+        msg_event = adapter.handle_message.call_args[0][0]
+        assert len(msg_event.media_urls) == 1
+        assert msg_event.media_types[0] == "audio/mp4"
+        assert msg_event.message_type == MessageType.VOICE
+
 
 # ---------------------------------------------------------------------------
 # TestMessageRouting
