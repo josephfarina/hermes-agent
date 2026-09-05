@@ -1,14 +1,14 @@
 ---
 name: simplify-code
 description: "Parallel 4-agent cleanup of recent code changes."
-version: 1.1.0
-author: Hermes Agent (inspired by Claude Code /simplify)
+version: 1.2.0
+author: Joey Farina (josephfarina), Hermes Agent (inspired by Claude Code /simplify)
 license: MIT
 platforms: [linux, macos, windows]
 metadata:
   hermes:
-    tags: [code-review, cleanup, refactor, delegation, subagent, parallel, simplify]
-    related_skills: [requesting-code-review, test-driven-development]
+    tags: [code-review, cleanup, refactor, delegation, subagent, parallel, simplify, deletion]
+    related_skills: [minimal-change, requesting-code-review, test-driven-development]
 ---
 
 # Simplify Code — Parallel Review & Cleanup
@@ -38,9 +38,13 @@ Optional modifiers the user may add — honor them:
 
 - **Focus:** "simplify focus on efficiency" → run only the efficiency reviewer
   (or weight the aggregation toward it). Recognized focuses: `reuse`,
-  `quality` (also accepts `simplification`), `efficiency`, `altitude`.
+  `quality` (also accepts `simplification`), `efficiency`, `altitude`. An
+  explicit `deletion-first` (or `deletion`) focus runs one narrow, read-only
+  reviewer instead of the normal four-reviewer fan-out; it never adds a fifth
+  reviewer.
 - **Dry run:** "simplify but don't change anything" / "just report" → run the
-  four reviewers, present findings, apply NOTHING. Ask before applying.
+  reviewer set selected by Focus (four by default, or the one read-only
+  reviewer for `deletion-first`), present findings, and apply NOTHING.
 - **Scope:** "simplify the last commit" / "simplify staged" / "simplify
   src/foo.py" → narrow the diff source accordingly (see Phase 1).
 
@@ -80,6 +84,10 @@ will be token-heavy, and offer to scope it down (per-directory, per-commit)
 before proceeding.
 
 ### Phase 2 — Launch four reviewers in parallel
+
+Unless the user explicitly selected `deletion-first`, preserve the normal
+four-reviewer flow below. Deletion-first is an alternative focused mode, not a
+new default reviewer.
 
 Use `delegate_task` **batch mode** — pass all four tasks in one `tasks`
 array so they run concurrently. Four is the right fan-out for this pattern;
@@ -183,6 +191,46 @@ Pass these four goals (drop any the user's focus excludes):
 > surrounding code and `git blame` first: what looks like a band-aid is
 > sometimes a deliberate boundary (compat shims, staged migrations,
 > vendored-code isolation). Don't flag those.
+
+### Deletion-first focus — one read-only reviewer
+
+Only when the user explicitly selects `deletion-first` (or `deletion`), run a
+single narrow reviewer instead of the normal four. Do not wait for four
+reviewers or apply changes, including when dry run is also specified. This
+reviewer reports opportunities but must not edit files or apply suggestions,
+even when a finding is SAFE. Give it the complete scoped diff and repository
+path, and require it to search surrounding code, references, tests, and history
+for concrete evidence.
+
+Ask it to consider these categories in order and tag each finding with exactly
+one label:
+
+- **`delete`** — demonstrably unused code, imports, wrappers, branches, or
+  comments can be removed.
+- **`stdlib`** — standard-library functionality can replace maintained custom
+  code without changing supported behavior.
+- **`native`** — a supported language, framework, runtime, or platform feature
+  can replace custom machinery.
+- **`yagni`** — speculative flexibility has no current caller or requirement.
+- **`shrink`** — equivalent logic can be made materially smaller or clearer
+  after the earlier replacement options are exhausted.
+
+Every finding must include `file:line`, the concrete cost, suggested change,
+evidence (such as references, call sites, tests, history, or documented
+platform behavior), confidence (`high`/`medium`/`low`), and risk
+(`SAFE`/`CAREFUL`/`RISKY`). Apply Chesterton's Fence before suggesting any
+removal: inspect `git blame`, relevant history, and surrounding intent. If the
+purpose cannot be established, lower confidence and do not present deletion as
+safe. Dynamic or reflective use requires direct investigation; absence from a
+static analysis tool is not proof.
+
+Never target real tests, security controls, trust-boundary validation,
+data-loss safeguards, accessibility behavior, or public contracts merely to
+reduce lines. Fewer lines alone are not evidence of an improvement.
+
+For this focused mode, skip Phase 3's application steps. Aggregate and dedupe
+the reviewer's report, discard unsupported claims, group findings by risk, and
+return the evidence-backed findings for the user to decide what to implement.
 
 ### Phase 3 — Aggregate and apply
 
